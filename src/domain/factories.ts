@@ -47,6 +47,8 @@ export function createBlankResume(options: ResumeFactoryOptions = {}): BossResum
     workExperiences: [],
     projects: [],
     educations: [],
+    professionalSkills: [],
+    customModules: [],
     certificates: [],
     socialProfiles: [],
     volunteerExperiences: [],

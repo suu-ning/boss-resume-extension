@@ -10,6 +10,7 @@ import type {
   BossVolunteerExperience,
   BossWorkExperience,
 } from "../domain/types";
+import { splitSkillItems } from "../domain/skills";
 
 /**
  * 把 AI 返回的简历 JSON 安全地合并回本地简历：
@@ -23,8 +24,20 @@ function isRecord(value: unknown): value is Rec {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * 还原模型多转义一层的换行。JSON 正常解析后会得到真实换行，
+ * 这里主要兼容返回值中仍带有字面量 `\\n` 的接口或模型。
+ */
+export function normalizeAiText(value: string): string {
+  return value
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    .replace(/\r\n?/g, "\n");
+}
+
 function str(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return normalizeAiText(value);
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return undefined;
 }
@@ -118,6 +131,16 @@ export function applyAiResume(base: BossResumeDocument, patch: Rec): BossResumeD
   if (isRecord(patch.profile)) next.profile = mergeProfile(base.profile, patch.profile);
   if (isRecord(patch.jobIntent)) next.jobIntent = mergeJobIntent(base.jobIntent, patch.jobIntent);
   if (isRecord(patch.jobSearchStatus)) next.jobSearchStatus = mergeJobSearchStatus(base.jobSearchStatus, patch.jobSearchStatus);
+  if ("professionalSkills" in patch && Array.isArray(patch.professionalSkills)) {
+    // 模型常把整段技能描述放进一个元素，按行拆开才和编辑器「一行一条」一致。
+    next.professionalSkills = splitSkillItems(list(patch.professionalSkills));
+  }
+  if ("customModules" in patch && Array.isArray(patch.customModules)) {
+    next.customModules = structuredClone(patch.customModules).filter((item): item is { key: string; title: string; items: unknown[] } => {
+      if (!isRecord(item) || typeof item.key !== "string" || typeof item.title !== "string" || !Array.isArray(item.items)) return false;
+      return true;
+    });
+  }
 
   next.workExperiences = mergeItems<BossWorkExperience>("work", base.workExperiences, patch.workExperiences, (s) => {
     const isCurrent = bool(s.isCurrent);

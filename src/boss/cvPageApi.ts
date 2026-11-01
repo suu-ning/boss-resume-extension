@@ -23,8 +23,11 @@ export interface CvApiError {
 }
 
 export interface CvApi {
-  /** 成功返回 zpData；code !== 0 或网络失败时抛出 CvApiError。 */
-  call(method: "GET" | "POST", path: string, params?: Record<string, unknown>): Promise<unknown>;
+  /**
+   * 成功返回 zpData；code !== 0 或网络失败时抛出 CvApiError。
+   * extraHeaders 用于 www.zhipin.com 特有的请求头（见 pageRead），不传时行为与之前完全一致。
+   */
+  call(method: "GET" | "POST", path: string, params?: Record<string, unknown>, extraHeaders?: Record<string, string>): Promise<unknown>;
 }
 
 export function installCvApiInPage(): void {
@@ -57,17 +60,25 @@ export function installCvApiInPage(): void {
     return `F-${chars.join("")}`;
   };
 
+  /**
+   * 表单编码：数组按 key[i] 展开，数组里的对象继续展开成 key[i][子字段]。
+   *
+   * 嵌套是必需的：在线简历 expect/save 的 multiExpectInfos 就是 [{position}]，
+   * 只展开一层会把它拼成 "[object Object]"，接口返回 code 0 却什么都没写。
+   */
   const encode = (params: Raw): URLSearchParams => {
     const search = new URLSearchParams();
     const put = (key: string, value: unknown) => search.append(key, value === undefined || value === null ? "" : String(value));
-    for (const [key, value] of Object.entries(params)) {
-      if (Array.isArray(value)) value.forEach((item, index) => put(`${key}[${index}]`, item));
+    const walk = (key: string, value: unknown): void => {
+      if (Array.isArray(value)) value.forEach((item, index) => walk(`${key}[${index}]`, item));
+      else if (isRecord(value)) for (const [child, item] of Object.entries(value)) walk(`${key}[${child}]`, item);
       else put(key, value);
-    }
+    };
+    for (const [key, value] of Object.entries(params)) walk(key, value);
     return search;
   };
 
-  const call: CvApi["call"] = async (method, path, params = {}) => {
+  const call: CvApi["call"] = async (method, path, params = {}, extraHeaders) => {
     const url = new URL(path, location.origin);
     const headers: Record<string, string> = {
       accept: "application/json, text/plain, */*",
@@ -75,6 +86,8 @@ export function installCvApiInPage(): void {
       traceId: traceId(),
       zp_token: cookie("bst"),
     };
+    // 直聘简历用不到额外请求头；www.zhipin.com 的接口还会带 token，由调用方按需补。
+    if (extraHeaders) for (const [key, value] of Object.entries(extraHeaders)) if (value) headers[key] = value;
     let body: string | undefined;
     if (method === "GET") encode(params).forEach((value, key) => url.searchParams.append(key, value));
     else {

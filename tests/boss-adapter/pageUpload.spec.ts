@@ -83,6 +83,7 @@ describe("uploadResumeInPage", () => {
       "myresume/updatecvname.json",
       "profile/save.json",
       "advantage/save.json",
+      "skills/save.json",
       "workexp/save.json",
       "workexp/save.json",
       "projectexp/delete.json",
@@ -119,6 +120,18 @@ describe("uploadResumeInPage", () => {
     expect(profile.get("sort")).toBe("1001,1005,1006,1003,1002");
   });
 
+  it("将 BOSS 专业技能模块编码排在个人优势之后", async () => {
+    const calls = setup({
+      "/wapi/zpcvresume/myresume/query.json": ok({ profileVO: { sort: [1001, 1002, 1003, 1005] }, workExpVOList: [], projectExpVOList: [], eduExpVOList: [] }),
+    });
+    const built = plan(0);
+    built.professionalSkills = { text: "Java", html: "<p>Java</p>" };
+    built.sectionCodes = [1002, 2001, 1003, 1005, 1006];
+    await uploadResumeInPage(built);
+    const profile = calls.find((c) => c.path.endsWith("profile/save.json"))!.params;
+    expect(profile.get("sort")).toBe("1001,1002,2001,1003,1005,1006");
+  });
+
   it("直聘原来没有的模块补在末尾", async () => {
     const calls = setup({
       "/wapi/zpcvresume/myresume/query.json": ok({ profileVO: { sort: [1001, 1002, 1003, 1005] }, workExpVOList: [], projectExpVOList: [], eduExpVOList: [] }),
@@ -138,6 +151,18 @@ describe("uploadResumeInPage", () => {
     expect(education.get("endYear")).toBe("-1");
     expect(education.get("endYearStr")).toBe("");
     expect(education.get("startYear")).toBe("2014");
+  });
+
+  it("写入专业技能纯文本和富文本，并在回读不一致时告警", async () => {
+    const calls = setup();
+    const built = plan(0);
+    built.professionalSkills = { text: "Java\nSpring Boot", html: "<p>Java</p><p>Spring Boot</p>" };
+    const result = await uploadResumeInPage(built);
+    const saved = calls.find((call) => call.path.endsWith("skills/save.json"))!.params;
+    expect(saved.get("content")).toBe("Java\nSpring Boot");
+    expect(saved.get("contentRichText")).toBe("<p>Java</p><p>Spring Boot</p>");
+    expect(saved.has("skills")).toBe(false);
+    expect(result.ok && result.warnings).toContain("专业技能：BOSS 回读内容与本地不一致，请到直聘简历里核对");
   });
 
   it("份数已满时不新建", async () => {

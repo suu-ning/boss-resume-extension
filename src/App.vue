@@ -5,6 +5,7 @@ import {
   createBlankResume,
   type BossResumeDocument,
   type ResumeIndexItem,
+  type OnlineSyncOptions,
   validateResume,
   describeIssue,
   createResumeFromBossImport,
@@ -16,6 +17,7 @@ import { fetchBossResume, listBossResumes, uploadBossResume } from "./boss/clien
 import { buildUploadPlan, type BossUploadResult } from "./boss/uploadPlan";
 import type { BossFetchError } from "./boss/types";
 import StringList from "./components/StringList.vue";
+import CustomModulesEditor from "./components/CustomModulesEditor.vue";
 import ItemList from "./components/ItemList.vue";
 import { EDUCATION, PROJECTS, WORK } from "./editor/itemSections";
 import ResumePreview from "./components/ResumePreview.vue";
@@ -24,10 +26,12 @@ import AiSettingsDialog from "./components/AiSettingsDialog.vue";
 import { AiSettingsStore, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai/settings";
 import type { ResumeMaterial } from "./ai/materials";
 import { syncAiOriginRule } from "./ai/originRule";
-import { normalizeSectionOrder, type MovableSectionId, type SectionId } from "./editor/sections";
+import { normalizeSectionOrder, type SectionId } from "./editor/sections";
 import SectionNav from "./components/SectionNav.vue";
 import DateRangeFields from "./components/DateRangeFields.vue";
 import ToastHost from "./components/ToastHost.vue";
+import RecordingDialog from "./components/RecordingDialog.vue";
+import OnlineSyncDialog from "./components/OnlineSyncDialog.vue";
 import { toast } from "./ui/toast";
 
 type SaveState = "saved" | "saving" | "error" | "unsaved";
@@ -40,6 +44,12 @@ const saveState = ref<SaveState>("saved");
 /** 待确认删除的简历；undefined 表示未打开删除确认框。 */
 const pendingRemoval = ref<{ localId: string; title: string }>();
 const activeSection = ref<SectionId>("profile");
+const professionalSkillsText = computed({
+  get: () => current.value?.professionalSkills.join("\n") ?? "",
+  set: (value: string) => {
+    if (current.value) current.value.professionalSkills = value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  },
+});
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let suspendAutoSave = false;
 let ignoreNextChange = false;
@@ -50,6 +60,8 @@ const fetching = ref(false);
 const fetchProgress = ref<{ done: number; total: number }>();
 /** 刚从直聘简历导入的本地简历，在列表里高亮。 */
 const importedResumeIds = ref<string[]>([]);
+const showRecordingDialog = ref(false);
+const showOnlineSync = ref(false);
 
 /** 列出直聘简历（cv.zhipin.com/my-resumes/）里的全部简历，逐份读取并各存为一份本地简历。 */
 async function startBossFetch(): Promise<void> {
@@ -253,9 +265,22 @@ async function uploadCurrent(): Promise<void> {
   }
 }
 
+/**
+ * 在线简历快照：读到线上内容后立刻落盘，既是下次对比的基线，也是以后写入失败时的回滚依据。
+ * 模块勾选与取舍开关也一起存，下次打开弹窗沿用上次的选择。
+ *
+ * 直接改内存副本再走 saveNow：这样不会用仓库里的旧版本覆盖掉用户还没自动保存的编辑。
+ */
+async function saveOnlineSnapshot(payload: { fetchedAt: string; raw: Record<string, unknown>; options: OnlineSyncOptions }): Promise<void> {
+  if (!current.value) return;
+  current.value.onlineFetchedAt = payload.fetchedAt;
+  current.value.onlineSnapshot = { capturedAt: payload.fetchedAt, rawData: payload.raw };
+  current.value.onlineSyncOptions = payload.options;
+  await saveNow();
+}
+
 /** 编辑页左侧的编辑方式：表单（菜单 + 表单两段）或 AI 对话；右侧预览常驻。 */
 const editorMode = ref<"edit" | "ai">("edit");
-
 const aiStore = new AiSettingsStore();
 const aiSettings = ref<AiSettings>({ ...DEFAULT_AI_SETTINGS });
 const showAiSettings = ref(false);
@@ -353,6 +378,9 @@ async function openResume(id: string): Promise<void> {
   suspendAutoSave = true;
   // 旧数据没有模块顺序；补齐成完整数组，左侧菜单直接拖动改写它。
   resume.sectionOrder = normalizeSectionOrder(resume.sectionOrder);
+  // 旧版本没有专业技能和通用模块字段，打开时补齐后再进入编辑器。
+  resume.professionalSkills ??= [];
+  resume.customModules ??= [];
   current.value = resume;
   activeSection.value = "profile";
   editorMode.value = "edit";
@@ -477,6 +505,8 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="view === 'editor'" class="header-actions">
         <span class="save-state" :class="`save-state--${saveState}`" aria-live="polite">{{ saveText }}</span>
+        <button class="button button--quiet" type="button" @click="showRecordingDialog = true">附件同步调研</button>
+        <button v-if="current" class="button button--quiet" type="button" @click="showOnlineSync = true">同步在线简历</button>
         <button class="button button--quiet" type="button" @click="duplicateResume()">复制</button>
         <button v-if="current" class="button button--quiet button--danger" type="button" @click="requestRemove(current)">删除</button>
         <button class="button button--accent" type="button" :disabled="saveState === 'saving' || uploadingResume" :title="current?.bossCvId ? '覆盖直聘简历里对应的那份' : '在直聘简历新建一份'" @click="uploadCurrent">{{ uploadingResume ? "正在上传到 BOSS…" : "上传" }}</button>
@@ -486,7 +516,7 @@ onBeforeUnmount(() => {
     <section v-if="view === 'list'" class="list-view" aria-labelledby="page-title">
       <div class="list-hero">
         <div><p class="eyebrow">YOUR LOCAL VERSIONS</p><h1 id="page-title">管理每一份<em>求职档案</em></h1><p>本地编辑，按你的节奏准备下一次机会。</p></div>
-        <div class="hero-actions"><button class="button button--accent button--large" type="button" @click="createResume">+ 创建空白简历</button><button class="button button--outline" type="button" :disabled="fetching" @click="startBossFetch">{{ fetching ? (fetchProgress ? `正在读取 BOSS（${fetchProgress.done}/${fetchProgress.total}）…` : "正在读取 BOSS…") : "从 BOSS 获取" }}</button><a class="button button--quiet" :href="BOSS_RESUME_URL" target="_blank" rel="noopener noreferrer">前往 BOSS 简历 ↗</a></div>
+        <div class="hero-actions"><button class="button button--accent button--large" type="button" @click="createResume">+ 创建空白简历</button><button class="button button--outline" type="button" :disabled="fetching" @click="startBossFetch">{{ fetching ? (fetchProgress ? `正在读取 BOSS（${fetchProgress.done}/${fetchProgress.total}）…` : "正在读取 BOSS…") : "从 BOSS 获取" }}</button><button class="button button--quiet" type="button" @click="showRecordingDialog = true">附件同步调研</button><a class="button button--quiet" :href="BOSS_RESUME_URL" target="_blank" rel="noopener noreferrer">前往 BOSS 简历 ↗</a></div>
       </div>
       <div class="list-toolbar"><span>{{ resumes.length }} 份本地简历</span><span>不会自动上传 BOSS</span></div>
       <div v-if="resumes.length" class="resume-list" role="list">
@@ -507,14 +537,18 @@ onBeforeUnmount(() => {
           <button type="button" role="tab" :aria-selected="editorMode === 'edit'" :class="{ active: editorMode === 'edit' }" @click="editorMode = 'edit'">编辑</button>
           <button type="button" role="tab" :aria-selected="editorMode === 'ai'" :class="{ active: editorMode === 'ai' }" @click="editorMode = 'ai'">AI 编辑</button>
         </div>
-        <div v-if="editorMode === 'edit'" class="composer-body">
+        <div v-show="editorMode === 'edit'" class="composer-body">
           <aside class="editor-nav" aria-label="简历分组">
             <p class="eyebrow">RESUME EDITOR</p><h1>{{ current.title || "未命名简历" }}</h1>
-            <SectionNav :order="current.sectionOrder as MovableSectionId[]" :active="activeSection" :issues="issuesBySection" @select="editSection" />
+            <SectionNav :order="current.sectionOrder as SectionId[]" :active="activeSection" :issues="issuesBySection" @select="editSection" />
           </aside>
 
           <div class="editor-content">
             <section v-if="activeSection === 'profile'" class="form-section"><div class="section-heading"><p class="eyebrow">CORE PROFILE</p><h2>基本资料</h2><p>这些信息用于识别你的职业身份。</p></div><div class="form-grid"><label class="field field--wide">简历名称<input v-model="current.title" maxlength="80" placeholder="例如：产品经理 · 增长方向" /></label><label class="field">姓名<input v-model="current.profile.name" maxlength="40" placeholder="你的姓名" /></label><label class="field">性别<select v-model="current.profile.gender"><option :value="undefined">未填写</option><option value="male">男</option><option value="female">女</option><option value="unknown">不便透露</option></select></label><label class="field">求职身份<input v-model="current.profile.jobIdentity" placeholder="例如：在职，考虑机会" /></label><label class="field">参加工作时间<input v-model="current.profile.workStartDate" type="month" /></label><label class="field">出生年月<input v-model="current.profile.birthDate" type="month" /></label><label class="field field--wide">头像链接<input v-model="current.profile.avatar" type="url" placeholder="https://" /></label></div><h3 class="form-subhead">求职意向</h3><div class="form-grid"><label class="field">工作类型<input v-model="current.jobIntent.jobType" placeholder="全职 / 实习 / 兼职" /></label><label class="field">薪资期望<input v-model="current.jobIntent.salary" placeholder="例如：25-35K·14薪" /></label><label class="field field--wide">求职偏好<textarea v-model="current.jobIntent.jobPreference" rows="3" placeholder="行业、团队或工作方式偏好" /></label></div><div class="chip-groups"><StringList label="期望城市" :items="current.jobIntent.cities" /><StringList label="期望职位" :items="current.jobIntent.positions" /><StringList label="目标行业" :items="current.jobIntent.industries" /></div></section>
+
+            <section v-if="activeSection === 'professionalSkills'" class="form-section"><div class="section-heading"><p class="eyebrow">PROFESSIONAL SKILLS</p><h2>专业技能</h2><p>保留原简历中的技能描述，也可以按行整理技能要点。</p></div><label class="field field--wide"><span>技能描述</span><textarea v-model="professionalSkillsText" rows="10" maxlength="3000" placeholder="例如：熟练 TypeScript、JavaScript，熟悉 React 与状态管理…" /></label><p class="field-hint">每行会作为一条技能内容保存。</p></section>
+
+            <section v-if="activeSection === 'customModules'" class="form-section"><CustomModulesEditor :modules="current.customModules" /></section>
 
             <section v-if="activeSection === 'advantage'" class="form-section"><div class="section-heading"><p class="eyebrow">ADVANTAGE</p><h2>个人优势</h2><p>用具体能力、经验和成果说明你的价值。</p></div><label class="field field--wide"><span class="visually-hidden">个人优势</span><textarea v-model="current.advantage" rows="10" maxlength="2000" placeholder="例如：5 年消费互联网产品经验，主导过从 0 到 1 的增长产品…" /></label><p class="field-hint">{{ current.advantage.length }}/2000。最终以 BOSS 服务端的字段限制为准。</p></section>
 
@@ -526,7 +560,7 @@ onBeforeUnmount(() => {
 
           </div>
         </div>
-        <AiChat v-else v-model:materials="aiMaterials" :resume="current" :settings="aiSettings" @apply="applyAiResume" @open-settings="showAiSettings = true" />
+        <AiChat v-show="editorMode === 'ai'" v-model:materials="aiMaterials" :resume="current" :settings="aiSettings" @apply="applyAiResume" @open-settings="showAiSettings = true" />
       </div>
       <section class="preview-col" aria-label="简历预览">
         <ResumePreview :resume="current" @edit="editSection" />
@@ -546,6 +580,8 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </div>
+    <RecordingDialog v-if="showRecordingDialog" @close="showRecordingDialog = false" />
+    <OnlineSyncDialog v-if="showOnlineSync && current" :resume="current" @close="showOnlineSync = false" @snapshot="saveOnlineSnapshot" />
     <ToastHost />
   </main>
 </template>

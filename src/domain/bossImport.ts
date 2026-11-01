@@ -10,6 +10,8 @@ export type BossResumeContent = Pick<
   | "workExperiences"
   | "projects"
   | "educations"
+  | "professionalSkills"
+  | "customModules"
   | "certificates"
   | "socialProfiles"
   | "volunteerExperiences"

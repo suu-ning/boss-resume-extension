@@ -2,6 +2,13 @@ export type BossResumeSource = "boss-import" | "manual" | "copy";
 
 export type BossResumeSyncState = "unbound" | "synced" | "local-dirty";
 
+/** BOSS 返回但本地尚未建立专用编辑器的模块，保留原始条目避免导入/AI 时丢失。 */
+export interface BossCustomModule {
+  key: string;
+  title: string;
+  items: unknown[];
+}
+
 export interface BossResumeDocument {
   localId: string;
   title: string;
@@ -24,12 +31,55 @@ export interface BossResumeDocument {
   workExperiences: BossWorkExperience[];
   projects: BossProject[];
   educations: BossEducation[];
+  professionalSkills: string[];
+  customModules: BossCustomModule[];
   certificates: BossCertificate[];
   socialProfiles: BossSocialProfile[];
   volunteerExperiences: BossVolunteerExperience[];
   jobSearchStatus: BossJobSearchStatus;
   remoteSnapshot?: BossRemoteSnapshot;
   unmappedFields?: Record<string, unknown>;
+  /** 最近一次读取在线简历（www.zhipin.com）的时间。 */
+  onlineFetchedAt?: string;
+  /** 最近一次读取的在线简历原始数据：既用于差异对比，也是写回失败时回滚的依据。 */
+  onlineSnapshot?: BossOnlineSnapshot;
+  /** 同步到在线简历时，对「容易影响推荐」的字段怎么取舍。 */
+  onlineSyncOptions?: OnlineSyncOptions;
+}
+
+/** 在线简历里可以被单独勾选同步的模块。 */
+export type OnlineModuleId =
+  | "baseInfo"
+  | "advantage"
+  | "professionalSkill"
+  | "expect"
+  | "work"
+  | "project"
+  | "education"
+  | "certificate";
+
+/**
+ * 同步到在线简历时的取舍开关。
+ *
+ * 默认全部保留线上原值：求职状态与期望行业直接进入推荐与投递链路，跟着本地档案覆盖风险过高，
+ * 只有用户显式打开才按本地覆盖。
+ */
+export interface OnlineSyncOptions {
+  /** 求职状态（applyStatus）：默认保留线上值。 */
+  syncJobStatus: boolean;
+  /** 期望行业：默认保留线上值。 */
+  syncIndustries: boolean;
+  /**
+   * 本次要同步的模块（多选）。undefined 表示全选，用于兼容没有这个字段的旧档案；
+   * 空数组表示一个都不选，此时不会写入任何内容。
+   */
+  modules?: OnlineModuleId[];
+}
+
+/** 在线简历原始快照（geek/preview/data.json 的 zpData 原样保存）。 */
+export interface BossOnlineSnapshot {
+  capturedAt: string;
+  rawData: Record<string, unknown>;
 }
 
 export interface BossProfile {

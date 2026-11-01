@@ -65,7 +65,7 @@ function resetDefaults(): void {
       <button class="dialog-close" type="button" aria-label="关闭对话框" @click="emit('close')">×</button>
       <p class="eyebrow">AI SETTINGS</p>
       <h2 id="ai-settings-title">AI 写作设置</h2>
-      <p>默认接入 DeepSeek，也可以换成其他兼容 OpenAI 格式的接口。配置只保存在本机浏览器里。</p>
+      <p>默认接入 DeepSeek，也可以换成其他兼容 OpenAI 格式的接口。配置只保存在本机浏览器里。要让 AI 识别图片，所选模型还必须支持视觉输入。</p>
       <div class="ai-settings-form">
         <label class="field">API Key
           <span class="ai-key-row">

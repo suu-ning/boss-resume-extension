@@ -25,6 +25,7 @@ export async function uploadResumeInPage(plan: UploadPlan): Promise<BossUploadRe
   const DEFAULT_TEMPLATE_ID = "7d133318365793281g~~";
   const WRITE_GAP_MS = 300;
   const warnings: string[] = [];
+  warnings.push(...plan.notes, ...plan.notUploaded.map((item) => `未自动上传：${item}`));
   let cvId: string | undefined;
   let created = false;
   let templateId = DEFAULT_TEMPLATE_ID;
@@ -244,6 +245,9 @@ export async function uploadResumeInPage(plan: UploadPlan): Promise<BossUploadRe
     step = "保存个人优势";
     await write("/wapi/zpcvresume/advantage/save.json", { content: plan.advantage.text, contentRichText: plan.advantage.html });
 
+    step = "保存专业技能";
+    await write("/wapi/zpcvresume/skills/save.json", { content: plan.professionalSkills.text, contentRichText: plan.professionalSkills.html });
+
     const works: Raw[] = [];
     for (const work of plan.works) {
       const hit = work.positionName ? await positionOf(work.positionName) : undefined;
@@ -306,6 +310,8 @@ export async function uploadResumeInPage(plan: UploadPlan): Promise<BossUploadRe
       for (const [label, actual, expected] of checks) {
         if (length(actual) !== expected) warnings.push(`${label}：本地 ${expected} 条，BOSS 上是 ${length(actual)} 条，请到直聘简历里核对`);
       }
+      const plain = (value: unknown) => typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+      if (plain(final.skills) !== plain(plan.professionalSkills.text)) warnings.push("专业技能：BOSS 回读内容与本地不一致，请到直聘简历里核对");
       if (isRecord(final.profileVO) && final.profileVO.name !== plan.profile.name) warnings.push("BOSS 上的姓名与本地不一致，请到直聘简历里核对");
     }
 

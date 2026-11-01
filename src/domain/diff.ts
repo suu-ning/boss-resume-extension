@@ -18,6 +18,8 @@ type ComparableDocument = Pick<
   | "workExperiences"
   | "projects"
   | "educations"
+  | "professionalSkills"
+  | "customModules"
   | "certificates"
   | "socialProfiles"
   | "volunteerExperiences"
@@ -33,6 +35,8 @@ const DIFF_FIELDS: Array<keyof ComparableDocument> = [
   "workExperiences",
   "projects",
   "educations",
+  "professionalSkills",
+  "customModules",
   "certificates",
   "socialProfiles",
   "volunteerExperiences",

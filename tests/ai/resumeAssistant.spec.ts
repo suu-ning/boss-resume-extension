@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askResumeAssistant, summarizeChanges } from "../../src/ai/resumeAssistant";
-import { applyAiResume, normalizeDate } from "../../src/ai/resumePatch";
+import { askResumeAssistant, editableView, summarizeChanges } from "../../src/ai/resumeAssistant";
+import { applyAiResume, normalizeAiText, normalizeDate } from "../../src/ai/resumePatch";
 import { createBlankResume } from "../../src/domain/factories";
 import type { BossResumeDocument } from "../../src/domain/types";
 
@@ -41,15 +41,33 @@ describe("applyAiResume", () => {
 
   it("至今的经历不保留结束时间；未提供的模块保持原样", () => {
     const base = sample();
+    base.professionalSkills = ["Java", "Spring"];
+    base.customModules = [{ key: "awardList", title: "荣誉奖项", items: [{ name: "优秀员工" }] }];
     const next = applyAiResume(base, { workExperiences: [{ localId: "work-1", isCurrent: true, endDate: "2026-01" }] });
     expect(next.workExperiences[0].endDate).toBeUndefined();
     expect(next.educations).toEqual(base.educations);
+    expect(next.professionalSkills).toEqual(base.professionalSkills);
+    expect(next.customModules).toEqual(base.customModules);
+    expect(editableView(base)).toMatchObject({ professionalSkills: ["Java", "Spring"], customModules: base.customModules });
   });
 
   it("识别常见日期写法", () => {
     expect(normalizeDate("2020/3")).toBe("2020-03");
     expect(normalizeDate("2020-03-05")).toBe("2020-03-05");
     expect(normalizeDate("至今")).toBe("至今");
+  });
+
+  it("还原 AI 文本里的转义换行并保留正常换行", () => {
+    expect(normalizeAiText("第一行\\n第二行\\n\\n第三行\n第四行")).toBe("第一行\n第二行\n\n第三行\n第四行");
+    const next = applyAiResume(sample(), {
+      advantage: "第一行\\n第二行",
+      workExperiences: [{ localId: "work-1", responsibilities: "负责接口开发\\n推动上线" }],
+      professionalSkills: ["TypeScript\\nVue", "Java"],
+    });
+    expect(next.advantage).toBe("第一行\n第二行");
+    expect(next.workExperiences[0].responsibilities).toBe("负责接口开发\n推动上线");
+    // 技能是「一行一条」：模型把两行塞进一个元素时按行拆开，否则预览只出一个圆点。
+    expect(next.professionalSkills).toEqual(["TypeScript", "Vue", "Java"]);
   });
 });
 
@@ -88,10 +106,28 @@ describe("askResumeAssistant", () => {
     expect(body.messages[0].content).toContain("负责 Java 后端");
   });
 
+  it("把图片作为 OpenAI 兼容的视觉消息发送", async () => {
+    const fetchMock = stubReply({ reply: "已根据截图调整", resume: null });
+    await askResumeAssistant(settings, sample(), [], "按截图中的 JD 优化", {
+      images: [{ id: "image-1", name: "jd.png", mimeType: "image/png", bytes: 3, dataUrl: "data:image/png;base64,YWJj" }],
+    });
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body.messages.at(-1).content).toEqual([
+      { type: "text", text: "按截图中的 JD 优化" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,YWJj" } },
+    ]);
+  });
+
   it("resume 为 null 时只返回回复", async () => {
     stubReply({ reply: "请提供岗位 JD", resume: null });
     const result = await askResumeAssistant(settings, sample(), [], "按 JD 优化");
     expect(result).toEqual({ reply: "请提供岗位 JD", changes: [] });
+  });
+
+  it("把回复中的字面量转义换行还原成真实换行", async () => {
+    stubReply({ reply: "第一行\\n\\n第二行", resume: null });
+    const result = await askResumeAssistant(settings, sample(), [], "请总结");
+    expect(result.reply).toBe("第一行\n\n第二行");
   });
 
   it("模型只回了一段文字时当作回复展示，不改简历", async () => {

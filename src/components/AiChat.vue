@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRaw, watch } from "vue";
 import { AiError } from "../ai/chatClient";
+import { IMAGE_LIMITS, readImageFiles, type AiImage } from "../ai/images";
 import { extractUrls, readLinkMaterial } from "../ai/linkMaterial";
 import { MATERIAL_LIMITS, mergeMaterials, readMaterialFiles, totalMaterialChars, type ResumeMaterial } from "../ai/materials";
 import { askResumeAssistant, summarizeChanges, type AiTurn } from "../ai/resumeAssistant";
@@ -19,6 +20,7 @@ interface ChatEntry {
   role: "user" | "assistant" | "error";
   content: string;
   changes?: string[];
+  images?: AiImage[];
   /** AI 改动前的简历，用于撤销这一轮。 */
   before?: BossResumeDocument;
   undone?: boolean;
@@ -42,10 +44,33 @@ let seq = 0;
 
 const ready = computed(() => isAiReady(props.settings));
 
+/** structuredClone 不能直接复制嵌套 Vue 代理，先递归还原成普通对象。 */
+function cloneResume(value: BossResumeDocument): BossResumeDocument {
+  const seen = new WeakMap<object, unknown>();
+  const unwrap = (input: unknown): unknown => {
+    const raw = toRaw(input);
+    if (!raw || typeof raw !== "object") return raw;
+    if (seen.has(raw)) return seen.get(raw);
+    if (Array.isArray(raw)) {
+      const output: unknown[] = [];
+      seen.set(raw, output);
+      for (const item of raw) output.push(unwrap(item));
+      return output;
+    }
+    const output: Record<string, unknown> = {};
+    seen.set(raw, output);
+    for (const [key, item] of Object.entries(raw)) output[key] = unwrap(item);
+    return output;
+  };
+  return structuredClone(unwrap(value)) as BossResumeDocument;
+}
+
 // ---------- 补充材料：JD、旧简历、项目笔记等纯文本 ----------
 
 const fileInput = ref<HTMLInputElement>();
 const folderInput = ref<HTMLInputElement>();
+const imageInput = ref<HTMLInputElement>();
+const pendingImages = ref<AiImage[]>([]);
 const materialChars = computed(() => totalMaterialChars(materials.value));
 
 /** 文件夹选择靠非标准属性，模板里不写，挂载后再设，避免类型检查报未知属性。 */
@@ -87,7 +112,38 @@ async function onPicked(event: Event): Promise<void> {
 }
 
 function onDrop(event: DragEvent): void {
-  void addMaterials(event.dataTransfer?.files ?? null);
+  const files = Array.from(event.dataTransfer?.files ?? []);
+  void addMaterials(files.filter((file) => !file.type.startsWith("image/")));
+  void addImages(files.filter((file) => file.type.startsWith("image/")));
+}
+
+async function addImages(list: FileList | File[] | null): Promise<void> {
+  if (!list || !list.length) return;
+  const read = await readImageFiles(list);
+  const room = Math.max(0, IMAGE_LIMITS.files - pendingImages.value.length);
+  const accepted = read.images.slice(0, room);
+  const skipped = [...read.skipped, ...read.images.slice(room).map((image) => ({ name: image.name, reason: `最多添加 ${IMAGE_LIMITS.files} 张图片` }))];
+  pendingImages.value = [...pendingImages.value, ...accepted];
+  if (skipped.length) {
+    toast({ title: `${skipped.length} 张图片没有加入`, tone: "error", lines: skipped.slice(0, 6).map((item) => `${item.name}：${item.reason}`) });
+  }
+}
+
+async function onImagePicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  await addImages(input.files);
+  input.value = "";
+}
+
+async function onPaste(event: ClipboardEvent): Promise<void> {
+  const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
+  if (!files.length) return;
+  event.preventDefault();
+  await addImages(files);
+}
+
+function removeImage(id: string): void {
+  pendingImages.value = pendingImages.value.filter((image) => image.id !== id);
 }
 
 function removeMaterial(id: string): void {
@@ -113,7 +169,12 @@ function push(entry: Omit<ChatEntry, "id">): void {
 function history(): AiTurn[] {
   return entries.value
     .filter((entry): entry is ChatEntry & { role: AiTurn["role"] } => entry.role !== "error")
-    .map(({ role, content }) => ({ role, content }));
+    .map(({ role, content, images }) => ({
+      role,
+      content: images?.length
+        ? [{ type: "text" as const, text: content || "请结合这张图片处理我的简历请求。" }, ...images.map((image) => ({ type: "image_url" as const, image_url: { url: image.dataUrl } }))]
+        : content,
+    }));
 }
 
 function shortUrl(url: string): string {
@@ -165,18 +226,21 @@ async function readLinks(urls: string[]): Promise<void> {
 
 async function send(text = input.value): Promise<void> {
   const prompt = text.trim();
-  if (!prompt || busy.value || !ready.value) return;
+  const images = pendingImages.value.map((image) => ({ ...image }));
+  if ((!prompt && !images.length) || busy.value || !ready.value) return;
   const past = history();
-  push({ role: "user", content: prompt });
+  push({ role: "user", content: prompt || "请结合图片处理我的简历请求。", images });
   input.value = "";
+  pendingImages.value = [];
   busy.value = true;
   controller = new AbortController();
-  const before = structuredClone(toRaw(props.resume));
+  let before: BossResumeDocument;
   const links = extractUrls(prompt);
   try {
+    before = cloneResume(props.resume);
     if (links.length) await readLinks(links);
     progress.value = "AI 正在修改简历…";
-    const result = await askResumeAssistant(props.settings, before, past, prompt, { materials: materials.value, signal: controller.signal });
+    const result = await askResumeAssistant(props.settings, before, past, prompt, { images, materials: materials.value, signal: controller.signal });
     if (result.resume) {
       emit("apply", result.resume);
       push({ role: "assistant", content: result.reply, changes: summarizeChanges(result.changes), before });
@@ -196,7 +260,7 @@ async function send(text = input.value): Promise<void> {
 /** 撤销某一轮：回到那一轮之前的简历，之后各轮的改动一并失效。 */
 function undo(entry: ChatEntry): void {
   if (!entry.before || busy.value) return;
-  emit("apply", structuredClone(entry.before));
+  emit("apply", cloneResume(entry.before));
   const index = entries.value.indexOf(entry);
   for (const later of entries.value.slice(index)) if (later.before) later.undone = true;
 }
@@ -261,6 +325,9 @@ function useSuggestion(text: string): void {
           </div>
         </div>
         <div v-for="entry in entries" :key="entry.id" class="ai-msg" :class="`ai-msg--${entry.role}`">
+          <div v-if="entry.images?.length" class="ai-msg-images">
+            <img v-for="image in entry.images" :key="image.id" :src="image.dataUrl" :alt="image.name" />
+          </div>
           <p>{{ entry.content }}</p>
           <div v-if="entry.changes?.length" class="ai-changes">
             <span v-for="change in entry.changes" :key="change" class="ai-change">{{ change }}</span>
@@ -272,9 +339,20 @@ function useSuggestion(text: string): void {
       </div>
 
       <form class="ai-input" @submit.prevent="send()">
-        <textarea v-model="input" rows="2" placeholder="例如：按这个 JD 改写第 1 段工作经历……（Enter 发送，Shift+Enter 换行）" :disabled="busy" @keydown="onKeydown" />
+        <div class="ai-input-main">
+          <div v-if="pendingImages.length" class="ai-image-list" aria-label="待发送图片">
+            <div v-for="image in pendingImages" :key="image.id" class="ai-image-chip">
+              <img :src="image.dataUrl" :alt="image.name" />
+              <span :title="image.name">{{ image.name }}</span>
+              <button type="button" :aria-label="`移除 ${image.name}`" :disabled="busy" @click="removeImage(image.id)">×</button>
+            </div>
+          </div>
+          <textarea v-model="input" rows="2" placeholder="输入要求，也可以粘贴、拖入图片……（Enter 发送，Shift+Enter 换行）" :disabled="busy" @keydown="onKeydown" @paste="onPaste" />
+        </div>
+        <button class="button button--quiet ai-image-button" type="button" :disabled="busy" aria-label="添加图片" title="添加图片" @click="imageInput?.click()">图片</button>
+        <input ref="imageInput" type="file" multiple hidden accept="image/*" @change="onImagePicked" />
         <button v-if="busy" class="button button--outline" type="button" @click="controller?.abort()">停止</button>
-        <button v-else class="button button--accent" type="submit" :disabled="!input.trim()">发送</button>
+        <button v-else class="button button--accent" type="submit" :disabled="!input.trim() && !pendingImages.length">发送</button>
       </form>
     </template>
   </section>

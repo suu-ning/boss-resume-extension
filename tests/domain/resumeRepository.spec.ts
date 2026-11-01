@@ -50,6 +50,18 @@ describe("ResumeRepository", () => {
     expect((await repository.get("resume-1"))?.title).toBe("原始标题");
   });
 
+  it("存量档案里一条含多行的专业技能，读出来按行拆开", async () => {
+    const storage = new MemoryLocalStorageArea();
+    const repository = new ResumeRepository(storage);
+    const resume = createBlankResume({ createId: () => "skills" });
+    resume.professionalSkills = ["熟练 Vue 3\n熟悉 React"];
+    // 直接写存储，模拟旧版本留下的脏数据（save 会自动规范化，绕开它）。
+    await storage.set({ [resumeStorageKey("skills")]: structuredClone(resume) });
+
+    const loaded = await repository.get("skills");
+    expect(loaded?.professionalSkills).toEqual(["熟练 Vue 3", "熟悉 React"]);
+  });
+
   it("读写最后选中的简历设置", async () => {
     const repository = new ResumeRepository(new MemoryLocalStorageArea());
 

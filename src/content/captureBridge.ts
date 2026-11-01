@@ -14,6 +14,7 @@ const CHANNEL = "__bossResumeExt__";
 const STATUS_MESSAGE = "boss.record.status";
 const STATE_MESSAGE = "boss.record.state";
 const APPEND_MESSAGE = "boss.record.append";
+const PING_MESSAGE = "boss.record.ping";
 
 let recording = false;
 
@@ -22,14 +23,25 @@ function publish(value: boolean): void {
   window.postMessage({ [CHANNEL]: "state", recording: value }, location.origin);
 }
 
-chrome.runtime
-  .sendMessage({ type: STATUS_MESSAGE })
-  .then((status: { recording?: unknown } | undefined) => publish(status?.recording === true))
-  .catch(() => publish(false));
+try {
+  chrome.runtime
+    .sendMessage({ type: STATUS_MESSAGE })
+    .then((status: { recording?: unknown } | undefined) => publish(status?.recording === true))
+    .catch(() => publish(false));
+} catch {
+  // 扩展重载后旧脚本的运行时已失效，sendMessage 会同步抛错。此时不自行恢复（做不到），
+  // 由 Service Worker 重新注入一份完整的桥接脚本来接管，见 background/recorder.ts 的 attachRecorder。
+  publish(false);
+}
 
-chrome.runtime.onMessage.addListener((message: unknown, sender) => {
+chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return;
   const data = message as { type?: unknown; recording?: unknown } | null;
+  // 探活：Service Worker 靠这个才知道本页面还能不能录。
+  if (data?.type === PING_MESSAGE) {
+    sendResponse({ ok: true, recording });
+    return;
+  }
   if (data?.type === STATE_MESSAGE && typeof data.recording === "boolean") publish(data.recording);
 });
 
@@ -37,5 +49,9 @@ window.addEventListener("message", (event: MessageEvent) => {
   if (event.source !== window || !recording) return;
   const data = event.data as Record<string, unknown> | null;
   if (!data || data[CHANNEL] !== "record") return;
-  void chrome.runtime.sendMessage({ type: APPEND_MESSAGE, record: data.record }).catch(() => undefined);
+  try {
+    void chrome.runtime.sendMessage({ type: APPEND_MESSAGE, record: data.record }).catch(() => undefined);
+  } catch {
+    // 运行时已失效（扩展重载），本条记录丢弃；重新注入后由新脚本继续转发。
+  }
 });

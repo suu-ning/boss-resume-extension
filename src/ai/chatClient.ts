@@ -3,8 +3,16 @@ import { readSseData } from "./sse";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: ChatContent;
 }
+
+export interface ChatContentPart {
+  type: "text" | "image_url";
+  text?: string;
+  image_url?: { url: string };
+}
+
+export type ChatContent = string | ChatContentPart[];
 
 export class AiError extends Error {}
 

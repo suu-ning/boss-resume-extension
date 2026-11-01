@@ -53,6 +53,19 @@ describe("uploadPlan 转换", () => {
     expect(plan.educations[0]).toMatchObject({ current: true, startYear: 2014, endYear: undefined });
   });
 
+  it("专业技能加入上传计划，自定义模块仍提示未验证写入", () => {
+    const doc = resume();
+    doc.professionalSkills = ["Java", "Spring Boot"];
+    doc.customModules = [{ key: "awardList", title: "荣誉奖项", items: [{ name: "优秀员工" }] }];
+    const plan = buildUploadPlan(doc);
+    expect(plan.professionalSkills).toEqual({ text: "Java\nSpring Boot", html: "<p>Java</p><p>Spring Boot</p>" });
+    expect(plan.sectionCodes).toEqual([1001, 1002, 2001, 1003, 1005, 1006]);
+    expect(plan.notUploaded.some((item) => item.includes("自定义模块") && item.includes("不会自动添加"))).toBe(true);
+    doc.bossCvId = "cv-existing";
+    const boundPlan = buildUploadPlan(doc);
+    expect(boundPlan.professionalSkills.text).toBe("Java\nSpring Boot");
+  });
+
   it("计划可 JSON 序列化（要作为 executeScript 参数传入页面）", () => {
     const plan = buildUploadPlan(resume());
     expect(JSON.parse(JSON.stringify(plan))).toEqual(plan);

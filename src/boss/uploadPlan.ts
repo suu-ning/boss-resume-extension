@@ -74,6 +74,8 @@ export interface UploadPlan {
     highSalary: number;
   };
   advantage: UploadText;
+  /** BOSS 专业技能字段（skills / skillsRichText）。 */
+  professionalSkills: UploadText;
   /** 个人优势 / 工作经历 / 项目经历 / 教育经历的模块编码，按本地顺序排列（如 [1003, 1002, 1005, 1006]）。 */
   sectionCodes: number[];
   works: UploadWork[];
@@ -204,6 +206,11 @@ export function buildUploadPlan(resume: BossResumeDocument): UploadPlan {
   count(resume.certificates, "资格证书");
   count(resume.socialProfiles, "社交主页");
   count(resume.volunteerExperiences, "志愿者服务");
+  if (resume.customModules?.length) {
+    notUploaded.push(resume.bossCvId
+      ? `自定义模块 ${resume.customModules.length} 项：当前版本未验证写入接口，将沿用 BOSS 已有内容`
+      : `自定义模块 ${resume.customModules.length} 项：当前版本未验证写入接口，新建简历不会自动添加`);
+  }
   if (intent.industries.length) notUploaded.push("期望行业");
   if (intent.jobType || intent.jobPreference) notUploaded.push("求职类型与偏好");
   if (Object.values(resume.jobSearchStatus).some(Boolean)) notUploaded.push("求职状态");
@@ -235,7 +242,13 @@ export function buildUploadPlan(resume: BossResumeDocument): UploadPlan {
       highSalary: salary?.[1] ?? 0,
     },
     advantage: toUploadText(resume.advantage),
-    sectionCodes: normalizeSectionOrder(resume.sectionOrder).map((id) => SECTION_CODE[id]),
+    professionalSkills: toUploadText((resume.professionalSkills ?? []).map((item) => item.trim()).filter(Boolean).join("\n")),
+    sectionCodes: (() => {
+      return normalizeSectionOrder(resume.sectionOrder)
+        .filter((id) => id !== "professionalSkills" || resume.professionalSkills?.some((item) => item.trim()))
+        .map((id) => SECTION_CODE[id])
+        .filter((code): code is number => code !== undefined);
+    })(),
     works: resume.workExperiences.map((work) => ({
       company: work.companyName.trim(),
       positionName: work.positionName.trim(),

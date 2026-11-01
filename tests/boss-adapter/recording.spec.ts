@@ -65,14 +65,15 @@ describe("sanitizeRecord", () => {
       bodyKind: "json",
       requestBody: { name: "<string:2>", gender: "<integer:1>", birthday: "<format:9999.99>", works: ["<array:1>", { company: "<string:4>" }] },
       responseCode: 0,
-      responseMessage: "Success",
+      responseMessage: "<string:7>",
       responseBody: { code: "<integer:0>", message: "<string:7>", zpData: { resumeId: "<integer>", title: "<string:4>" } },
     });
   });
 
   it("保留错误码与提示，用于识别份数已满等失败", () => {
     const record = sanitizeRecord(raw({ responseText: JSON.stringify({ code: 1001, message: "简历数量已达上限" }) }), STARTED);
-    expect(record).toMatchObject({ responseCode: 1001, responseMessage: "简历数量已达上限" });
+    expect(record).toMatchObject({ responseCode: 1001, responseMessage: "<string:8>" });
+    expect(JSON.stringify(record)).not.toContain("简历数量已达上限");
   });
 
   it("非 zhipin.com 的请求与非法 URL 丢弃，非 JSON 响应只留长度", () => {

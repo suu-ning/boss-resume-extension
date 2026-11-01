@@ -3,6 +3,7 @@ import type {
   ResumeIndexItem,
   ResumeSettings,
 } from "../domain/types";
+import { splitSkillItems } from "../domain/skills";
 import {
   createDefaultLocalStorage,
   type LocalStorageArea,
@@ -37,14 +38,24 @@ function isIndexItem(value: unknown): value is ResumeIndexItem {
   );
 }
 
-function isResumeDocument(value: unknown): value is BossResumeDocument {
-  return (
+function isResumeDocument(value: unknown): value is BossResumeDocument {  return (
     value !== null &&
     typeof value === "object" &&
     typeof (value as BossResumeDocument).localId === "string" &&
     typeof (value as BossResumeDocument).title === "string" &&
     typeof (value as BossResumeDocument).updatedAt === "string"
   );
+}
+
+/**
+ * 存量档案里可能有一条含多行的「专业技能」（AI 补全或导入时整段塞进一个元素），
+ * 它在预览里只会渲染出一个圆点。读出来就按行拆开，下次保存时固化。
+ */
+function withNormalizedSkills(resume: BossResumeDocument): BossResumeDocument {
+  const skills = resume.professionalSkills ?? [];
+  const normalized = splitSkillItems(skills);
+  const same = normalized.length === skills.length && normalized.every((item, index) => item === skills[index]);
+  return same ? resume : { ...resume, professionalSkills: normalized };
 }
 
 export class ResumeRepository {
@@ -66,11 +77,12 @@ export class ResumeRepository {
   public async get(localId: string): Promise<BossResumeDocument | undefined> {
     const values = await this.storage.get(resumeStorageKey(localId));
     const resume = values[resumeStorageKey(localId)];
-    return isResumeDocument(resume) ? resume : undefined;
+    return isResumeDocument(resume) ? withNormalizedSkills(resume) : undefined;
   }
 
   /** 写入完整文档，并在同一次 storage.set 调用中更新列表索引。 */
-  public async save(resume: BossResumeDocument): Promise<void> {
+  public async save(document: BossResumeDocument): Promise<void> {
+    const resume = withNormalizedSkills(document);
     const previousIndex = await this.list();
     const indexItem = toIndexItem(resume);
     const index = [

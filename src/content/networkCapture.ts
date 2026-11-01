@@ -1,7 +1,7 @@
 /**
  * 在 BOSS 页面主世界 document_start 注入（manifest content_scripts, world: "MAIN"）。
  *
- * 只服务“接口排查”录制：扩展录制开启时，把页面自己发出的 zhipin.com 请求的方法、URL、请求头名、请求体与
+ * 只服务“附件同步调研”录制：扩展录制开启时，把页面自己发出的 zhipin.com 请求的方法、URL、请求头名、请求体与
  * 响应文本经 window.postMessage 交给隔离世界的 content/captureBridge.ts，由 Service Worker 脱敏后保存（见 boss/recording.ts）。
  * 录制关闭时不观察任何请求。读取简历不依赖本脚本：扩展直接在直聘简历页调用它自己的接口（boss/pageFetch.ts）。
  *

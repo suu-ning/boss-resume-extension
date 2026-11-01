@@ -66,16 +66,33 @@ const status = computed(() => {
   return filled(s.status, s.availableDate && `可到岗：${s.availableDate}`, s.preferredContactTime && `联系时间：${s.preferredContactTime}`);
 });
 
+function rawText(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(rawText).filter(Boolean).join("、");
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => {
+        const text = rawText(item);
+        return text ? `${key}：${text}` : "";
+      })
+      .filter(Boolean)
+      .join("；");
+  }
+  return "";
+}
+
 const isEmpty = computed(() => {
   const r = props.resume;
   return !r.advantage.trim() && !r.workExperiences.length && !r.projects.length && !r.educations.length
+    && !(r.professionalSkills ?? []).length && !(r.customModules ?? []).length
     && !r.certificates.length && !r.socialProfiles.length && !r.volunteerExperiences.length;
 });
 </script>
 
 <template>
   <article class="rp-page" aria-label="简历预览">
-    <header class="rp-header">
+    <template v-for="section in order" :key="section">
+    <header v-if="section === 'profile'" class="rp-header">
       <img v-if="resume.profile.avatar" class="rp-avatar" :src="resume.profile.avatar" alt="" />
       <div v-else class="rp-avatar rp-avatar--empty" aria-hidden="true">{{ initial }}</div>
       <div class="rp-identity">
@@ -86,7 +103,6 @@ const isEmpty = computed(() => {
       <button class="rp-edit" type="button" @click="emit('edit', 'profile')">编辑</button>
     </header>
 
-    <template v-for="section in order" :key="section">
     <section v-if="section === 'advantage' && resume.advantage.trim()" class="rp-section">
       <h2>个人优势<button class="rp-edit" type="button" @click="emit('edit', 'advantage')">编辑</button></h2>
       <p class="rp-text">{{ resume.advantage }}</p>
@@ -121,6 +137,18 @@ const isEmpty = computed(() => {
         <p v-if="item.campusExperience" class="rp-text">{{ item.campusExperience }}</p>
         <p v-if="item.thesis" class="rp-text"><b class="rp-label">论文 / 研究课题</b>{{ item.thesis }}</p>
       </div>
+    </section>
+
+    <section v-else-if="section === 'professionalSkills' && resume.professionalSkills?.length" class="rp-section">
+      <h2>专业技能<button class="rp-edit" type="button" @click="emit('edit', 'professionalSkills')">编辑</button></h2>
+      <ul class="rp-skill-list"><li v-for="(skill, index) in resume.professionalSkills" :key="index">{{ skill }}</li></ul>
+    </section>
+
+    <section v-else-if="section === 'customModules' && resume.customModules?.length" class="rp-custom-group">
+      <section v-for="module in resume.customModules" :key="module.key" class="rp-section">
+        <h2>{{ module.title }}<button class="rp-edit" type="button" @click="emit('edit', 'customModules')">编辑</button></h2>
+        <p v-for="(item, index) in module.items" :key="index" class="rp-text">{{ rawText(item) }}</p>
+      </section>
     </section>
     </template>
 

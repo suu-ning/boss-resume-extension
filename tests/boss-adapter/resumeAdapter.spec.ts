@@ -55,6 +55,21 @@ describe("BossResumeAdapter.adaptDetail", () => {
     expect(outcome.result.content.educations[0].endDate).toBeUndefined();
   });
 
+  it("提取专业技能并保留未识别的顶层数组模块", () => {
+    const data = {
+      ...detail(),
+      professionalSkillVOList: [{ skillName: "TypeScript" }, { name: "Vue" }],
+      customAwardVOList: [{ name: "优秀员工", year: 2024 }],
+    };
+    const outcome = BossResumeAdapter.adaptDetail("cv-1", data, FETCHED_AT);
+    if (!outcome.ok) throw new Error("unexpected");
+    expect(outcome.result.content.professionalSkills).toEqual(["TypeScript", "Vue"]);
+    expect(outcome.result.content.customModules).toEqual([
+      { key: "customAwardVOList", title: "Custom Award", items: [{ name: "优秀员工", year: 2024 }] },
+    ]);
+    expect(outcome.result.report.readGroups).toContainEqual({ label: "专业技能", count: 2 });
+  });
+
   it("缺少 profileVO 时报格式错误", () => {
     const outcome = BossResumeAdapter.adaptDetail("cv-1", { foo: 1 });
     expect(!outcome.ok && outcome.error.code).toBe("UNEXPECTED_RESPONSE");
